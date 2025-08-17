@@ -85,6 +85,10 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=1e-3, type=float)
     parser.add_argument('--accumulate_grad_batches', default=8, type=int)
     parser.add_argument('--check_val_every_n_epoch', default=1, type=int)
+    # Optional loop limits for faster eval runs
+    parser.add_argument('--limit_train_batches', default=1.0, type=float)
+    parser.add_argument('--limit_val_batches', default=1.0, type=float)
+    parser.add_argument('--limit_test_batches', default=1.0, type=float)
 
     parser.add_argument('--lr_scheduler', default='cosine', choices=['cosine'], type=str)
     parser.add_argument('--lr_decay_min_lr', default=1e-9, type=float)
@@ -130,6 +134,9 @@ if __name__ == '__main__':
     parser.add_argument('--lora_dropout', default=0.1, type=float)
 
     args = parser.parse_args()
+    # Normalize precision type for PL 1.8: cast numeric strings to int
+    if isinstance(args.precision, str) and args.precision.isdigit():
+        args.precision = int(args.precision)
     
     if 'movielens' in args.data_dir:
         args.padding_item_id = 1682

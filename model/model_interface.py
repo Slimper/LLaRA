@@ -40,7 +40,7 @@ class MInterface(pl.LightningModule):
         )
         return outputs
 
-    def generate(self, batch,temperature=0.8,do_sample=False,num_beams=1,max_gen_length=64,min_gen_length=1,repetition_penalty=1.0,length_penalty=1.0, num_return_sequences=1):
+    def generate(self, batch,temperature=1.0,do_sample=False,num_beams=1,max_gen_length=64,min_gen_length=1,repetition_penalty=1.0,length_penalty=1.0, num_return_sequences=1):
         input_embeds = self.wrap_emb(batch)
         generate_ids = self.llama_model.generate(
             inputs_embeds=input_embeds,
@@ -203,11 +203,13 @@ class MInterface(pl.LightningModule):
         self.llama_tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         self.llama_tokenizer.padding_side = "right"
         self.llama_tokenizer.add_special_tokens({'additional_special_tokens': ['[PH]','[HistoryEmb]','[CansEmb]','[ItemEmb]']})
-        self.llama_model = LlamaForCausalLM.from_pretrained(llm_path, torch_dtype=torch.bfloat16)
+        # Choose dtype based on requested precision and GPU capability
+        dtype = self._select_torch_dtype()
+        self.llama_model = LlamaForCausalLM.from_pretrained(llm_path, torch_dtype=dtype)
         self.llama_model.resize_token_embeddings(len(self.llama_tokenizer))
         if self.hparams.llm_tuning == 'lora':
             if self.hparams.peft_dir:
-                self.llama_model = PeftModel.from_pretrained(self.llm_model, self.hparams.peft_dir, is_trainable=True)
+                self.llama_model = PeftModel.from_pretrained(self.llama_model, self.hparams.peft_dir, is_trainable=True)
             else:
                 if self.hparams.peft_config:
                     peft_config = LoraConfig(**LoraConfig.from_json_file(self.hparams.peft_config))
@@ -226,7 +228,7 @@ class MInterface(pl.LightningModule):
                 param.requires_grad = False
         elif self.hparams.llm_tuning == 'freeze_lora':
             if self.hparams.peft_dir:
-                self.llama_model = PeftModel.from_pretrained(self.llm_model, self.hparams.peft_dir, is_trainable=True)
+                self.llama_model = PeftModel.from_pretrained(self.llama_model, self.hparams.peft_dir, is_trainable=True)
             else:
                 if self.hparams.peft_config:
                     peft_config = LoraConfig(**LoraConfig.from_json_file(self.hparams.peft_config))
@@ -246,6 +248,28 @@ class MInterface(pl.LightningModule):
             raise NotImplementedError()
  
         print('Loading LLAMA Done')
+
+    def _select_torch_dtype(self):
+        """Select a torch dtype based on precision flag and GPU capability.
+        - Prefer bf16 only on Ampere+ (SM >= 80). Otherwise fallback to fp16.
+        """
+        requested = str(getattr(self.hparams, 'precision', 'bf16')).lower()
+        # GPU capability check
+        bf16_supported = False
+        if torch.cuda.is_available():
+            try:
+                major, minor = torch.cuda.get_device_capability()
+                bf16_supported = major >= 8  # Ampere or newer
+            except Exception:
+                bf16_supported = False
+        if requested in {'bf16', 'bfloat16'}:
+            return torch.bfloat16 if bf16_supported else torch.float16
+        if requested in {'16', 'fp16', 'float16'}:
+            return torch.float16
+        if requested in {'32', 'fp32', 'float32'}:
+            return torch.float32
+        # Default safe fallback
+        return torch.float16
 
     def load_projector(self):
         name = self.hparams.model_name
